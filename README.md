@@ -1,9 +1,7 @@
 # InsertAttackData64
 
-See
-
-https://skyrimshot.blogspot.com/2018/01/portingse.html
-https://www.dropbox.com/s/w0gv1hehknjxacw/InsertAttackDataSouce.7z?dl=0
+SE version of the SKSE plugin for use with Ultimate Combat and Ultimate Dragons.
+I'm looking for people to update to the AE version.
 
 libskyrim code from himika https://github.com/himika/libSkyrim
 
