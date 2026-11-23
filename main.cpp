@@ -234,17 +234,28 @@ static void InitAttackDataJson()
 {
 	std::string baseDir("Meshes\\AttackData");
 
-	// read json files
-    std::experimental::filesystem::v1::path p(std::string("Data\\") + baseDir);
-	std::for_each(std::experimental::filesystem::v1::directory_iterator(p), std::experimental::filesystem::v1::directory_iterator(),
-		[&baseDir](const std::experimental::filesystem::v1::path& p)
-	{
-		if (!std::experimental::filesystem::v1::is_regular_file(p))
-			return;
+	// read json files (non-recursive, same as the std::experimental::filesystem version)
+	namespace fs = std::filesystem;
+	const fs::path dir(std::string("Data\\") + baseDir);
 
+	std::error_code ec;
+	fs::directory_iterator it(dir, ec);
+	if (ec)
+	{
+		_MESSAGE("**** warning **** cannot open directory %s: %s", dir.string().c_str(), ec.message().c_str());
+		return;
+	}
+
+	for (const fs::directory_entry& entry : it)
+	{
+		std::error_code fileEc;
+		if (!entry.is_regular_file(fileEc))
+			continue;
+
+		const fs::path& p = entry.path();
 		std::string ext = p.extension().string();
 		if (_stricmp(ext.c_str(), ".json") != 0)
-			return;
+			continue;
 
 		std::string fileName = "Data\\" + baseDir + "\\" + p.filename().string();
 
@@ -255,12 +266,37 @@ static void InitAttackDataJson()
 		{
 			RemapJson(val, s_setting);
 		}
-	});
+	}
+}
+
+// Per-runtime address table (RVAs, resolved with RelocAddr when the hook is installed).
+//   1.5.73  : original SE addresses, migration source only (AE SKSE never loads this plugin on 1.5.73)
+//   1.6.1170: not migrated yet (phase 2)
+//   1.7.104 : not migrated yet (phase 2)
+// Only add a runtime to SelectAddressTable() after phase 2 (addresses) AND phase 3 (TESRace /
+// BGSAttackDataMap layout) are verified for it: the hook writes into game structures.
+struct AddressTable
+{
+	const char* runtimeName;
+	uintptr_t TESRace_LoadForm;       // TESRace::LoadForm
+	uintptr_t TESRace_vtbl_LoadForm;  // ??_7TESRace@@6B@ vtable[6]
+};
+
+static constexpr AddressTable k1_5_73 = { "1.5.73", 0x00384BC0, 0x015A30E8 };
+
+static const AddressTable* SelectAddressTable(UInt32 runtimeVersion)
+{
+	switch (runtimeVersion)
+	{
+	// case RUNTIME_VERSION_1_7_104:  return &k1_7_104;   // phase 2/3
+	// case RUNTIME_VERSION_1_6_1170: return &k1_6_1170;  // phase 2/3
+	default:
+		return nullptr;
+	}
 }
 
 typedef bool(*_TESRaceLoadForm)(TESRace * race, int64_t unk1);
-RelocAddr<_TESRaceLoadForm> TESRaceOriginalLoadForm(0x00384BC0);
-RelocAddr<uintptr_t> vtbl_TESRaceLoadForm(0x015A30E8); // vtable[6]
+static _TESRaceLoadForm TESRaceOriginalLoadForm = nullptr;
 
 bool HookedLoadForm(TESRace * race, int64_t unk1)
 {
@@ -322,37 +358,53 @@ bool HookedLoadForm(TESRace * race, int64_t unk1)
 
 
 extern "C" {
-	bool SKSEPlugin_Query(const SKSEInterface * skse, PluginInfo * info)
+	// AE SKSE reads this data without running any plugin code to decide whether to load the DLL.
+	__declspec(dllexport) SKSEPluginVersionData SKSEPlugin_Version =
 	{
+		SKSEPluginVersionData::kVersion,
+
+		1,
+		"InsertAttackData64 plugin",
+
+		"",
+		"",
+
+		0,	// not version independent (extended field)
+		0,	// not version independent: hardcoded addresses and game structure layouts
+		{ RUNTIME_VERSION_1_7_104, RUNTIME_VERSION_1_6_1170, 0 },
+
+		0,	// works with any version of the script extender
+	};
+
+	bool SKSEPlugin_Load(const SKSEInterface * skse) {
 		gLog.OpenRelative(CSIDL_MYDOCUMENTS, "\\My Games\\Skyrim Special Edition\\SKSE\\InsertAttackData64.log");
 		gLog.SetPrintLevel(IDebugLog::kLevel_Error);
 		gLog.SetLogLevel(IDebugLog::kLevel_DebugMessage);
 
 		_MESSAGE("InsertAttackData64 Plugin");
-
-		// populate info structure
-		info->infoVersion = PluginInfo::kInfoVersion;
-		info->name = "InsertAttackData64 plugin";
-		info->version = 1;
+		_MESSAGE("runtime %08X, SKSE %08X", skse->runtimeVersion, skse->skseVersion);
 
 		if (skse->isEditor)
 		{
 			_MESSAGE("loaded in editor, marking as incompatible");
 			return false;
 		}
-		else if (skse->runtimeVersion != RUNTIME_VERSION_1_5_73)
+
+		const AddressTable* addresses = SelectAddressTable(skse->runtimeVersion);
+		if (addresses)
 		{
-			_MESSAGE("unsupported runtime version %08X", skse->runtimeVersion);
-			return false;
+			_MESSAGE("Address table: %s", addresses->runtimeName);
+			TESRaceOriginalLoadForm = RelocAddr<_TESRaceLoadForm>(addresses->TESRace_LoadForm);
+
+			_MESSAGE("Hooking TESRace::LoadForm");
+			SafeWrite64(RelocAddr<uintptr_t>(addresses->TESRace_vtbl_LoadForm).GetUIntPtr(), uintptr_t(HookedLoadForm));
+			_MESSAGE("Patched");
 		}
-
-		return true;
-	}
-
-	bool SKSEPlugin_Load(const SKSEInterface * skse) {
-		_MESSAGE("Hooking TESRace::LoadForm");
-		SafeWrite64(vtbl_TESRaceLoadForm.GetUIntPtr(), uintptr_t(HookedLoadForm));
-		_MESSAGE("Patched");
+		else
+		{
+			// Phase 1 of the AE migration: load, but never touch game memory until this runtime is verified.
+			_MESSAGE("Address table: none for runtime %08X (not migrated yet), TESRace::LoadForm hook disabled", skse->runtimeVersion);
+		}
 
 		_MESSAGE("Reading attack data json");
 		InitAttackDataJson();
