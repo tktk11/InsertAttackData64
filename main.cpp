@@ -271,8 +271,10 @@ static void InitAttackDataJson()
 
 // Per-runtime address table (RVAs, resolved with RelocAddr when the hook is installed).
 //   1.5.73  : original SE addresses, migration source only (AE SKSE never loads this plugin on 1.5.73)
-//   1.6.1170: not migrated yet (phase 2)
-//   1.7.104 : not migrated yet (phase 2)
+//   1.6.1170: addresses verified (phase 2), NOT enabled until phase 3
+//   1.7.104 : addresses verified (phase 2), NOT enabled until phase 3
+// Phase 2 evidence: RTTI COL of .?AVTESRace@@ at offset 0 -> primary vtable, slot[6] points to
+// TESRace::LoadForm (same prologue in all three versions; frame 0x400 in SE, 0x460 in AE).
 // Only add a runtime to SelectAddressTable() after phase 2 (addresses) AND phase 3 (TESRace /
 // BGSAttackDataMap layout) are verified for it: the hook writes into game structures.
 struct AddressTable
@@ -282,14 +284,17 @@ struct AddressTable
 	uintptr_t TESRace_vtbl_LoadForm;  // ??_7TESRace@@6B@ vtable[6]
 };
 
-static constexpr AddressTable k1_5_73 = { "1.5.73", 0x00384BC0, 0x015A30E8 };
+static constexpr AddressTable k1_5_73   = { "1.5.73",   0x00384BC0, 0x015A30E8 };
+static constexpr AddressTable k1_6_1170 = { "1.6.1170", 0x003DCCD0, 0x017E7EA8 };
+static constexpr AddressTable k1_7_104  = { "1.7.104",  0x003E3DA0, 0x01861D98 };
 
 static const AddressTable* SelectAddressTable(UInt32 runtimeVersion)
 {
 	switch (runtimeVersion)
 	{
-	// case RUNTIME_VERSION_1_7_104:  return &k1_7_104;   // phase 2/3
-	// case RUNTIME_VERSION_1_6_1170: return &k1_6_1170;  // phase 2/3
+	// Enable after phase 3 (TESRace / BGSAttackData / hash map layout checks):
+	// case RUNTIME_VERSION_1_7_104:  return &k1_7_104;
+	// case RUNTIME_VERSION_1_6_1170: return &k1_6_1170;
 	default:
 		return nullptr;
 	}
