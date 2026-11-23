@@ -147,6 +147,7 @@
     <ClInclude Include="libskyrim\BSTHashMap.h" />
     <ClInclude Include="libskyrim\BSTScatterTable.h" />
     <ClInclude Include="libskyrim\CRC.h" />
+    <ClInclude Include="libskyrim\GameAddresses.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -269,32 +269,51 @@ static void InitAttackDataJson()
 	}
 }
 
-// Per-runtime address table (RVAs, resolved with RelocAddr when the hook is installed).
+// Per-runtime address table (RVAs, resolved with RelocAddr at use time), see libskyrim/GameAddresses.h.
 //   1.5.73  : original SE addresses, migration source only (AE SKSE never loads this plugin on 1.5.73)
-//   1.6.1170: addresses verified (phase 2), NOT enabled until phase 3
-//   1.7.104 : addresses verified (phase 2), NOT enabled until phase 3
-// Phase 2 evidence: RTTI COL of .?AVTESRace@@ at offset 0 -> primary vtable, slot[6] points to
-// TESRace::LoadForm (same prologue in all three versions; frame 0x400 in SE, 0x460 in AE).
-// Only add a runtime to SelectAddressTable() after phase 2 (addresses) AND phase 3 (TESRace /
-// BGSAttackDataMap layout) are verified for it: the hook writes into game structures.
-struct AddressTable
-{
-	const char* runtimeName;
-	uintptr_t TESRace_LoadForm;       // TESRace::LoadForm
-	uintptr_t TESRace_vtbl_LoadForm;  // ??_7TESRace@@6B@ vtable[6]
+//   1.6.1170: incomplete (BGSAttackData ctor not confirmed) and SKSE 2.3.1 headers only carry
+//             1.7.104 addresses -> not selectable
+//   1.7.104 : phase 2 + phase 3 verified, enabled
+//
+// Phase 2 evidence (Steamless-unpacked exes, compared against 1.5.73):
+//   TESRace::LoadForm / vtable[6]: RTTI COL of .?AVTESRace@@ at offset 0 -> primary vtable slot[6]
+//                                  (same prologue in all versions; frame 0x400 SE / 0x460 AE)
+//   BGSAttackData ctor           : the only code referencing ??_7BGSAttackData@@6B@; body is
+//                                  instruction-identical to 1.5.73 (same field init 0x18..0x48),
+//                                  callers allocate 0x50 bytes
+//   CRC32_Size / _32 / _64       : table-driven CRC routines, same code shape as 1.5.73
+// Phase 3 evidence (1.7.104):
+//   TESRace base classes at the same offsets (TESFullName 0x20 ... BGSAttackDataForm 0x88),
+//   editorId 0x2E0 (GetFormEditorID), behaviorGraph 0x1E8 (ctor), BGSAttackDataMap ctor sets the
+//   same hash table fields (0x1C/0x24/0x28/0x38/0x40), DataHandler files array at 0xD70 / count
+//   0xD80 (game's GetFile-by-compile-index is byte-identical).
+using IAD::AddressTable;
+
+const AddressTable* IAD::g_addresses = nullptr;
+
+static constexpr AddressTable k1_5_73 = {
+	"1.5.73",
+	0x00384BC0, 0x015A30E8,   // TESRace::LoadForm, vtable[6]
+	0x003E7C20,               // BGSAttackData ctor
+	0x00C06490, 0x00C064F0, 0x00C06570, // CRC32 Size / 32 / 64
 };
 
-static constexpr AddressTable k1_5_73   = { "1.5.73",   0x00384BC0, 0x015A30E8 };
-static constexpr AddressTable k1_6_1170 = { "1.6.1170", 0x003DCCD0, 0x017E7EA8 };
-static constexpr AddressTable k1_7_104  = { "1.7.104",  0x003E3DA0, 0x01861D98 };
+static constexpr AddressTable k1_7_104 = {
+	"1.7.104",
+	0x003E3DA0, 0x01861D98,   // TESRace::LoadForm, vtable[6]
+	0x00449D80,               // BGSAttackData ctor
+	0x00CE2510, 0x00CE2570, 0x00CE25F0, // CRC32 Size / 32 / 64
+};
+
+// 1.6.1170 (partial, reference only): TESRace::LoadForm 0x003DCCD0, vtable[6] 0x017E7EA8,
+// CRC32_Size 0x00CC8380, CRC32_32 0x00CC83E0, CRC32_64 0x00CC8460; BGSAttackData ctor unconfirmed.
 
 static const AddressTable* SelectAddressTable(UInt32 runtimeVersion)
 {
 	switch (runtimeVersion)
 	{
-	// Enable after phase 3 (TESRace / BGSAttackData / hash map layout checks):
-	// case RUNTIME_VERSION_1_7_104:  return &k1_7_104;
-	// case RUNTIME_VERSION_1_6_1170: return &k1_6_1170;
+	case RUNTIME_VERSION_1_7_104:
+		return &k1_7_104;
 	default:
 		return nullptr;
 	}
@@ -396,6 +415,7 @@ extern "C" {
 		}
 
 		const AddressTable* addresses = SelectAddressTable(skse->runtimeVersion);
+		IAD::g_addresses = addresses;
 		if (addresses)
 		{
 			_MESSAGE("Address table: %s", addresses->runtimeName);

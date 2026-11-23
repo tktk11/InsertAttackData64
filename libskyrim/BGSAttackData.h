@@ -43,8 +43,8 @@ public:
 	float			staminaMult;		// 48 init'd 1.0f
 
 
-	MEMBER_FN_PREFIX(BGSAttackData);
-	DEFINE_MEMBER_FN(ctor, BGSAttackData *, 0x003E7C20);	
+	// ctor: address comes from the runtime table (IAD::AddressTable::BGSAttackData_ctor), see Create().
+	// SE 1.5.73 was 0x003E7C20. Layout (0x18..0x48) and size 0x50 verified identical in 1.7.104.
 };
 
 STATIC_ASSERT(sizeof(BGSAttackData) == 0x50);

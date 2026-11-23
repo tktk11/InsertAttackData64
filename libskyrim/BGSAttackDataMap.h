@@ -49,9 +49,8 @@ public:
 	HashMap	map;			// 10
 	TESRace	* attackRace;	// 40 - init'd 0
 
-	MEMBER_FN_PREFIX(BGSAttackDataMap);
-	DEFINE_MEMBER_FN(AddFromMod, void, 0x003E81E0, TESRace *race, TESFile *mod);
-	DEFINE_MEMBER_FN(ctor, BGSAttackDataMap*, 0x003E8080);
+	// AddFromMod (SE 0x003E81E0) and ctor (SE 0x003E8080) were declared with 1.5.73 addresses but are
+	// never called; removed so they cannot be used on AE by accident.
 };
 
 //class BGSAttackDataMap	size(72) :

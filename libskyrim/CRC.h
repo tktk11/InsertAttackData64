@@ -1,6 +1,11 @@
 #pragma once
 
 #include "../skse64_common/Relocation.h"
+#include "GameAddresses.h"
+
+// The CRC32 helpers live in the game executable; their addresses come from the runtime table
+// (IAD::g_addresses). Only called from the TESRace::LoadForm hook, which is installed only when
+// a table is selected.
 
 template <class Ty>
 class CRC32Calculator
@@ -19,7 +24,7 @@ protected:
 	template <std::size_t SIZE = sizeof(Ty)>
 	inline CRC32Calculator & operator=(const Ty &val) {
 		typedef void(*Fn)(UInt32 *, const void *, UInt32);
-		RelocAddr<Fn> fn(0x00C06490); // CalculateCRC32_Size
+		RelocAddr<Fn> fn(IAD::g_addresses->CRC32_Size); // CalculateCRC32_Size
 
 		fn(&m_checksum, &val, SIZE); 
 		return *this;
@@ -28,7 +33,7 @@ protected:
 	template <>
 	inline CRC32Calculator & operator=<4>(const Ty &val) {
 		typedef void(*Fn)(UInt32 *, Ty);
-		RelocAddr<Fn> fn(0x00C064F0); // CalculateCRC32_32
+		RelocAddr<Fn> fn(IAD::g_addresses->CRC32_32); // CalculateCRC32_32
 
 		fn(&m_checksum, val);
 		return *this;
@@ -37,7 +42,7 @@ protected:
 	template <>
 	inline CRC32Calculator & operator=<8>(const Ty &val) {
 		typedef void(*Fn)(UInt32 *, Ty);
-		RelocAddr<Fn> fn(0x00C06570); // CalculateCRC32_64
+		RelocAddr<Fn> fn(IAD::g_addresses->CRC32_64); // CalculateCRC32_64
 
 		fn(&m_checksum, val);
 		return *this;
