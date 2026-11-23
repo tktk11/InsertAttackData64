@@ -1,4 +1,4 @@
 LIBRARY	"InsertAttackData64"
-EXPORTS
-SKSEPlugin_Version	DATA
-SKSEPlugin_Load
+; Entry points are exported with __declspec(dllexport) in main.cpp, because the set differs per SDK:
+;   AE SKSE (2.1+): SKSEPlugin_Version, SKSEPlugin_Load
+;   SE SKSE (2.0.x): SKSEPlugin_Query, SKSEPlugin_Load

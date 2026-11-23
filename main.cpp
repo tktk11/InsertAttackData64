@@ -270,19 +270,19 @@ static void InitAttackDataJson()
 }
 
 // Per-runtime address table (RVAs, resolved with RelocAddr at use time), see libskyrim/GameAddresses.h.
-//   1.5.73  : original SE addresses, migration source only (AE SKSE never loads this plugin on 1.5.73)
-//   1.6.1170: incomplete (BGSAttackData ctor not confirmed) and SKSE 2.3.1 headers only carry
-//             1.7.104 addresses -> not selectable
-//   1.7.104 : phase 2 + phase 3 verified, enabled
+// One DLL is built per SKSE SDK and only uses the table of its SDK's runtime (CURRENT_RELEASE_RUNTIME):
+//   SKSE 2.0.20 -> 1.5.97    SKSE 2.2.6 -> 1.6.1170    SKSE 2.3.1 -> 1.7.104
+//   1.5.73  : original SE addresses, migration source only
+//   1.5.97 / 1.6.1170 / 1.7.104 : addresses + layouts verified (C:\dev\xse\re\verify.py)
 //
-// Phase 2 evidence (Steamless-unpacked exes, compared against 1.5.73):
+// Address evidence (Steamless-unpacked exes, compared against 1.5.73):
 //   TESRace::LoadForm / vtable[6]: RTTI COL of .?AVTESRace@@ at offset 0 -> primary vtable slot[6]
 //                                  (same prologue in all versions; frame 0x400 SE / 0x460 AE)
 //   BGSAttackData ctor           : the only code referencing ??_7BGSAttackData@@6B@; body is
 //                                  instruction-identical to 1.5.73 (same field init 0x18..0x48),
 //                                  callers allocate 0x50 bytes
 //   CRC32_Size / _32 / _64       : table-driven CRC routines, same code shape as 1.5.73
-// Phase 3 evidence (1.7.104):
+// Layout evidence (1.5.97, 1.6.1170, 1.7.104):
 //   TESRace base classes at the same offsets (TESFullName 0x20 ... BGSAttackDataForm 0x88),
 //   editorId 0x2E0 (GetFormEditorID), behaviorGraph 0x1E8 (ctor), BGSAttackDataMap ctor sets the
 //   same hash table fields (0x1C/0x24/0x28/0x38/0x40), DataHandler files array at 0xD70 / count
@@ -298,6 +298,21 @@ static constexpr AddressTable k1_5_73 = {
 	0x00C06490, 0x00C064F0, 0x00C06570, // CRC32 Size / 32 / 64
 };
 
+// 1.5.97: same code addresses as 1.5.73, .rdata vtable moved by -0x10
+static constexpr AddressTable k1_5_97 = {
+	"1.5.97",
+	0x00384BC0, 0x015A30D8,   // TESRace::LoadForm, vtable[6]
+	0x003E7C20,               // BGSAttackData ctor
+	0x00C06490, 0x00C064F0, 0x00C06570, // CRC32 Size / 32 / 64
+};
+
+static constexpr AddressTable k1_6_1170 = {
+	"1.6.1170",
+	0x003DCCD0, 0x017E7EA8,   // TESRace::LoadForm, vtable[6]
+	0x004428E0,               // BGSAttackData ctor
+	0x00CC8380, 0x00CC83E0, 0x00CC8460, // CRC32 Size / 32 / 64
+};
+
 static constexpr AddressTable k1_7_104 = {
 	"1.7.104",
 	0x003E3DA0, 0x01861D98,   // TESRace::LoadForm, vtable[6]
@@ -305,18 +320,20 @@ static constexpr AddressTable k1_7_104 = {
 	0x00CE2510, 0x00CE2570, 0x00CE25F0, // CRC32 Size / 32 / 64
 };
 
-// 1.6.1170 (partial, reference only): TESRace::LoadForm 0x003DCCD0, vtable[6] 0x017E7EA8,
-// CRC32_Size 0x00CC8380, CRC32_32 0x00CC83E0, CRC32_64 0x00CC8460; BGSAttackData ctor unconfirmed.
+// The table of the runtime this build's SKSE SDK targets (older SDKs lack the newer macros).
+#if defined(RUNTIME_VERSION_1_7_104) && CURRENT_RELEASE_RUNTIME == RUNTIME_VERSION_1_7_104
+static constexpr const AddressTable* kBuildTable = &k1_7_104;
+#elif defined(RUNTIME_VERSION_1_6_1170) && CURRENT_RELEASE_RUNTIME == RUNTIME_VERSION_1_6_1170
+static constexpr const AddressTable* kBuildTable = &k1_6_1170;
+#elif defined(RUNTIME_VERSION_1_5_97) && CURRENT_RELEASE_RUNTIME == RUNTIME_VERSION_1_5_97
+static constexpr const AddressTable* kBuildTable = &k1_5_97;
+#else
+static constexpr const AddressTable* kBuildTable = nullptr;
+#endif
 
 static const AddressTable* SelectAddressTable(UInt32 runtimeVersion)
 {
-	switch (runtimeVersion)
-	{
-	case RUNTIME_VERSION_1_7_104:
-		return &k1_7_104;
-	default:
-		return nullptr;
-	}
+	return runtimeVersion == CURRENT_RELEASE_RUNTIME ? kBuildTable : nullptr;
 }
 
 typedef bool(*_TESRaceLoadForm)(TESRace * race, int64_t unk1);
@@ -381,7 +398,67 @@ bool HookedLoadForm(TESRace * race, int64_t unk1)
 
 
 
+// SKSE 2.0.x (SE) uses SKSEPlugin_Query + SKSEPlugin_Load, SKSE 2.1+ (AE) SKSEPlugin_Version + SKSEPlugin_Load.
+#if SKSE_VERSION_INTEGER > 2 || (SKSE_VERSION_INTEGER == 2 && SKSE_VERSION_INTEGER_MINOR >= 1)
+#define IAD_AE_SDK 1
+#else
+#define IAD_AE_SDK 0
+#endif
+
+// Log and compatibility checks shared by the SE (Query) and AE (Load) entry points.
+static bool CheckRuntime(const SKSEInterface * skse)
+{
+	gLog.OpenRelative(CSIDL_MYDOCUMENTS, "\\My Games\\Skyrim Special Edition\\SKSE\\InsertAttackData64.log");
+	gLog.SetPrintLevel(IDebugLog::kLevel_Error);
+	gLog.SetLogLevel(IDebugLog::kLevel_DebugMessage);
+
+	_MESSAGE("InsertAttackData64 Plugin");
+	_MESSAGE("runtime %08X, SKSE %08X, built for runtime %08X", skse->runtimeVersion, skse->skseVersion, CURRENT_RELEASE_RUNTIME);
+
+	if (skse->isEditor)
+	{
+		_MESSAGE("loaded in editor, marking as incompatible");
+		return false;
+	}
+
+#if !IAD_AE_SDK
+	// SE SKSE has no version data; reject other runtimes here (AE SKSE does it from SKSEPlugin_Version).
+	if (skse->runtimeVersion != CURRENT_RELEASE_RUNTIME)
+	{
+		_MESSAGE("unsupported runtime version %08X", skse->runtimeVersion);
+		return false;
+	}
+#endif
+	return true;
+}
+
+// Installs the TESRace::LoadForm hook and reads the JSON files (run from SKSEPlugin_Load, as before).
+static void Install(const SKSEInterface * skse)
+{
+	const AddressTable* addresses = SelectAddressTable(skse->runtimeVersion);
+	IAD::g_addresses = addresses;
+	if (addresses)
+	{
+		_MESSAGE("Address table: %s", addresses->runtimeName);
+		TESRaceOriginalLoadForm = RelocAddr<_TESRaceLoadForm>(addresses->TESRace_LoadForm);
+
+		_MESSAGE("Hooking TESRace::LoadForm");
+		SafeWrite64(RelocAddr<uintptr_t>(addresses->TESRace_vtbl_LoadForm).GetUIntPtr(), uintptr_t(HookedLoadForm));
+		_MESSAGE("Patched");
+	}
+	else
+	{
+		// Never touch game memory on a runtime this build was not made for.
+		_MESSAGE("Address table: none for runtime %08X (not this build's runtime), TESRace::LoadForm hook disabled", skse->runtimeVersion);
+	}
+
+	_MESSAGE("Reading attack data json");
+	InitAttackDataJson();
+	_MESSAGE("Done");
+}
+
 extern "C" {
+#if IAD_AE_SDK
 	// AE SKSE reads this data without running any plugin code to decide whether to load the DLL.
 	__declspec(dllexport) SKSEPluginVersionData SKSEPlugin_Version =
 	{
@@ -395,46 +472,31 @@ extern "C" {
 
 		0,	// not version independent (extended field)
 		0,	// not version independent: hardcoded addresses and game structure layouts
-		{ RUNTIME_VERSION_1_7_104, RUNTIME_VERSION_1_6_1170, 0 },
+		{ CURRENT_RELEASE_RUNTIME, 0 },	// the runtime of the SKSE SDK this DLL is built with
 
 		0,	// works with any version of the script extender
 	};
 
-	bool SKSEPlugin_Load(const SKSEInterface * skse) {
-		gLog.OpenRelative(CSIDL_MYDOCUMENTS, "\\My Games\\Skyrim Special Edition\\SKSE\\InsertAttackData64.log");
-		gLog.SetPrintLevel(IDebugLog::kLevel_Error);
-		gLog.SetLogLevel(IDebugLog::kLevel_DebugMessage);
-
-		_MESSAGE("InsertAttackData64 Plugin");
-		_MESSAGE("runtime %08X, SKSE %08X", skse->runtimeVersion, skse->skseVersion);
-
-		if (skse->isEditor)
-		{
-			_MESSAGE("loaded in editor, marking as incompatible");
+	__declspec(dllexport) bool SKSEPlugin_Load(const SKSEInterface * skse) {
+		if (!CheckRuntime(skse))
 			return false;
-		}
-
-		const AddressTable* addresses = SelectAddressTable(skse->runtimeVersion);
-		IAD::g_addresses = addresses;
-		if (addresses)
-		{
-			_MESSAGE("Address table: %s", addresses->runtimeName);
-			TESRaceOriginalLoadForm = RelocAddr<_TESRaceLoadForm>(addresses->TESRace_LoadForm);
-
-			_MESSAGE("Hooking TESRace::LoadForm");
-			SafeWrite64(RelocAddr<uintptr_t>(addresses->TESRace_vtbl_LoadForm).GetUIntPtr(), uintptr_t(HookedLoadForm));
-			_MESSAGE("Patched");
-		}
-		else
-		{
-			// Phase 1 of the AE migration: load, but never touch game memory until this runtime is verified.
-			_MESSAGE("Address table: none for runtime %08X (not migrated yet), TESRace::LoadForm hook disabled", skse->runtimeVersion);
-		}
-
-		_MESSAGE("Reading attack data json");
-		InitAttackDataJson();
-		_MESSAGE("Done");
+		Install(skse);
 		return true;
 	}
+#else
+	__declspec(dllexport) bool SKSEPlugin_Query(const SKSEInterface * skse, PluginInfo * info)
+	{
+		info->infoVersion = PluginInfo::kInfoVersion;
+		info->name = "InsertAttackData64 plugin";
+		info->version = 1;
+
+		return CheckRuntime(skse);
+	}
+
+	__declspec(dllexport) bool SKSEPlugin_Load(const SKSEInterface * skse) {
+		Install(skse);
+		return true;
+	}
+#endif
 };
 
